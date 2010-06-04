@@ -1,9 +1,12 @@
 #!/usr/bin/env ruby
+#ENV['TM_SUPPORT_PATH'] = '/Library/Application Support/TextMate/Support'
 require ENV['TM_SUPPORT_PATH'] + "/lib/exit_codes"
 require "#{ENV['TM_SUPPORT_PATH']}/lib/escape"
 require "zlib"
 require "set"
 require "#{ENV['TM_SUPPORT_PATH']}/lib/ui"
+require "#{ENV['TM_BUNDLE_SUPPORT']}/docserver"
+
 
 
 class ExternalSnippetizer
@@ -287,7 +290,6 @@ class ObjCFallbackCompletion
     end
   end
 
-
   def pop_up(candidates, searchTerm,star,arg_name)
     start = searchTerm.size
 
@@ -336,7 +338,8 @@ class ObjCFallbackCompletion
       flags[:extra_chars]= '_'
       flags[:initial_filter]= searchTerm
       begin
-        TextMate::UI.complete(pl, flags)  do |hash| 
+        
+        TextMate::UI.complete(pl, flags)  do |hash|           
           es = ExternalSnippetizer.new({:star => star,
                :arg_name => arg_name,
                :tm_C_pointer => ENV['TM_C_POINTER']})
@@ -491,8 +494,8 @@ class ObjCMethodCompletion
       out = stuff[0]
     end
     out = "(#{stuff[5].gsub(/ \*/,(ENV['TM_C_POINTER'] || " *").rstrip)})#{out}" unless call || (stuff.size < 4)
-    
-    return [out, filterOn, cand, type]
+    fallback = "http://localhost:10001/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
+    return [out, filterOn, cand, type, fallback]
   end
 
   def snippet_generator(cand, start, call)
@@ -579,7 +582,7 @@ class ObjCMethodCompletion
     end
   end
 
-  def c_popup_gen(c,si,arg_type=nil)
+  def c_popup_gen(c,si)
     s = si.size
     #puts c.inspect.gsub("],", "],\n")
     #c.each {|e| puts e unless e.class == Array}
@@ -601,17 +604,18 @@ class ObjCMethodCompletion
     end
   end
 
-
-
   def show_dialog(prettyCandidates,start,static,word)
-    pl = prettyCandidates.map do |pretty, filter, full, type | 
-            { 'display' => pretty, 'cand' => full, 'match'=> filter, 'type'=> type.to_s}
+    pl = prettyCandidates.map do |pretty, filter, full, type, fallback | 
+            { 'display' => pretty, 'cand' => full, 'match'=> filter, 'type'=> type.to_s , 'fallback'=>fallback}
     end
         
     flags = {}
     flags[:static_prefix] =static
     flags[:extra_chars]= '_:'
     flags[:initial_filter]= word
+
+    start_documentation_server
+    
     begin
       TextMate::UI.complete(pl, flags) do |hash|
         ExternalSnippetizer.new.run(hash)
@@ -619,9 +623,38 @@ class ObjCMethodCompletion
     rescue NoMethodError
         TextMate.exit_show_tool_tip "you have Dialog2 installed but not the ui.rb in review"
     end
+
     TextMate.exit_discard
   end
 
+  def start_documentation_server
+    fork do
+       STDOUT.reopen(open('/tmp/nada1',"w+"))
+       STDERR.reopen(open('/tmp/nada2',"w+")) 
+       require 'open-uri'
+       begin
+         open('http://localhost:10001')
+       rescue
+         begin
+
+         DocServer.new
+
+         rescue Exception => e
+
+           open("/tmp/docs.txt", "w+") do |f|
+             f.puts "-"*25
+             f.puts e.message
+           end
+         else
+           open("/tmp/else.txt", "w+") do |f|
+             f.puts "-"*25
+             #f.puts e.message
+           end
+         end
+       end
+     end
+  end
+  
   def candidates_or_exit(methodSearch, list, fileNames)
     x = candidate_list(methodSearch, list, fileNames)
     TextMate.exit_show_tool_tip "No completion available" if x.empty?
@@ -650,7 +683,7 @@ class ObjCMethodCompletion
     return fileNames
   end
 
-  def candidate_list(methodSearch, list, types)
+  def candidate_list(methodSearch, list, types, allowEmpty = false)
     unless list.nil?
       obType = list[1]
       list = list[0]
@@ -660,7 +693,7 @@ class ObjCMethodCompletion
 
     candidates = []
     if obType && obType == :initObject
-      if methodSearch.match /^(i(n(i(t([A-Z]\w*)?)?)?)?)?(\[\[:alpha:\]:\])?$/
+      if methodSearch.match( /^(i(n(i(t([A-Z]\w*)?)?)?)?)?(\[\[:alpha:\]:\])?$/)
         methodSearch = "init(\b|[A-Z])" unless methodSearch.match(/^init(\b|[A-Z])/)
       end
     end
@@ -677,7 +710,7 @@ class ObjCMethodCompletion
           if types == :methods
             n << [l,:methods] if list && list.include?(f[3].split(";")[0])
           else
-            n << [l.strip,types] if list && list.include?(f[2].split("\n"))
+            n << [l.strip,types] if list && list.include?(f[2].rstrip)
           end
           candidates << [l.strip, types]
         end
@@ -687,7 +720,7 @@ class ObjCMethodCompletion
         #candidates += zGrepped.split("\n")
     end
 
-    n = (n.empty? ? candidates : n)
+    n = (n.empty? && !allowEmpty ? candidates : n)
     return n  
   end
 
@@ -723,47 +756,48 @@ class ObjCMethodCompletion
     arg_types = nil
     rules.each do |rule|
       sMn, sCn, sIMn, sTy = rule.split("!")
- #     sCn = nil if sCn.empty?
+      #     sCn = nil if sCn.empty?
       if(mn == sMn && (sCn == "" || (sCn != "" && sCn.split("|").include?(typeName))))
         arg_types = sTy.split("|")
         break
       end
     end
-    if arg_types
-      candidates = []
-      types = [arg_types.to_set]
-      candidates += candidate_list(search, types, :annotated)
-      candidates += candidate_list(search, types, :anonymous)
-      candidates += candidate_list(search, types, :functions)
-      candidates += candidate_list(search, types, :constants)
-      #puts candidates.inspect.gsub(",","\n")
-      res = c_popup_gen(candidates, search, arg_types)
-    else
+    unless arg_types
       candidates = candidate_list(mn, nil, :methods)
       if typeName
         temp = candidates.select do |e|
           c = e[0].split("\t")[3].match(/[A-Za-z0-9_]+/)[0]
           c == typeName
         end
-        candidates = temp unless temp.empty?
+        candidates = temp unless temp.empty?        
       end
-      arg_types = candidates.map{|e| e[0].split("\t")[5+mn.count(":")]} unless candidates.empty?
-
-      if show_arg && !arg_types.nil?
-        candidates = arg_types.uniq
-      else
-        candidates = []
-      end
-      types = [candidates.to_set]
-      candidates += candidate_list(search, types, :annotated)
-      candidates += candidate_list(search, types, :anonymous)
-      candidates += candidate_list(search, types, :functions)
-      candidates += candidate_list(search, types, :constants)
-#      puts candidates.inspect.gsub(",","\n")
-      TextMate.exit_show_tool_tip "No completion available" if candidates.empty?
-
-      res = c_popup_gen(candidates, search, arg_types)
+      arg_types = candidates.map{|e| e[0].split("\t")[5+mn.count(":")]}
+      
     end
+
+    types = [arg_types.uniq.to_set]
+
+    candidates = []
+    # run through once allowing lists to be empty
+    candidates += candidate_list(search, types, :annotated, true)
+    candidates += candidate_list(search, types, :anonymous, true)
+    candidates += candidate_list(search, types, :functions, true)
+    candidates += candidate_list(search, types, :constants, true)
+
+    # if all runs were empty, do them again and append all
+    if candidates.empty?
+      candidates += candidate_list(search, nil, :annotated)
+      candidates += candidate_list(search, nil, :anonymous)
+      candidates += candidate_list(search, nil, :functions)
+      candidates += candidate_list(search, nil, :constants)
+    end
+
+    if show_arg
+      candidates.insert(0, *arg_types)
+    end
+    #      puts candidates.inspect.gsub(",","\n")
+    TextMate.exit_show_tool_tip "No completion available" if candidates.empty?
+    res = c_popup_gen(candidates, search)
   end
 
 
@@ -777,7 +811,7 @@ class ObjCMethodCompletion
       l = k.post_match.scan(/([A-Z]\w+)\s*\*\s*(\w+(?:\s*\,\s*\*\s*\w+)*)/)
       l.each do |e|
         e[1].split(/\s*,\s*\*\s*/).each do |item|
-          if e[0].match /\*/
+          if e[0].match(/\*/)
             h[item] = e[0] + ' *'
           else
             h[item] = e[0]
@@ -795,7 +829,7 @@ class ObjCMethodCompletion
       obType = :instanceMethod
       list = list_from_shell_command(typeName, obType)
       if list.nil? && File.exists?(userClasses = "#{ENV['TM_PROJECT_DIRECTORY']}/.classes.TM_Completions.txt.gz")
-        candidates = %x{ zgrep ^#{e_sh h[var] + "[[:space:]]" } #{e_sh userClasses} }.split("\n")
+        candidates = %x{ zgrep ^#{e_sh h[var] + "[[:space:]]" } #{userClasses} }.split("\n")
         unless candidates.empty?
           list = Set.new
           c = candidates[0].split("\t")[1].split(":")
@@ -881,7 +915,7 @@ class ObjCMethodCompletion
     caret_placement = @car
     line = @line
     secondhalf = line.scan(/./mu)[1+caret_placement..-1].join
-    bc = secondhalf.match /\A[a-zA-Z0-9_]+(:)?/
+    bc = secondhalf.match(/\A[a-zA-Z0-9_]+(:)?/)
     if bc
       backContext = "[[:alnum:]]*" + bc[0]
       bcL = bc[0].length
