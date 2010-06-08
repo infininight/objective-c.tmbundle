@@ -494,7 +494,7 @@ class ObjCMethodCompletion
       out = stuff[0]
     end
     out = "(#{stuff[5].gsub(/ \*/,(ENV['TM_C_POINTER'] || " *").rstrip)})#{out}" unless call || (stuff.size < 4)
-    fallback = "http://localhost:10001/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
+    fallback = "http://localhost:17753/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
     return [out, filterOn, cand, type, fallback]
   end
 
@@ -633,7 +633,7 @@ class ObjCMethodCompletion
        STDERR.reopen(open('/tmp/nada2',"w+")) 
        require 'open-uri'
        begin
-         open('http://localhost:10001')
+         open('http://localhost:17753')
        rescue
          begin
 
