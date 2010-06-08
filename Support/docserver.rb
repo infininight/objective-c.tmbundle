@@ -8,7 +8,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
     Thread.new do
       until @idle
         @idle = true
-        sleep(50.0)
+        sleep(5.0*60.0)
       end
       server.shutdown 
     end
@@ -37,10 +37,18 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   def generateOBJCDocumentation(class_name, method_name)
        begin
          docset_cmd = "/Developer/usr/bin/docsetutil search -skip-text -query "
-         docset =  "/Developer/Documentation/DocSets/com.apple.adc.documentation.AppleSnowLeopard.CoreReference.docset"
+         sets =  [
+           "/Developer/Documentation/DocSets/com.apple.adc.documentation.AppleSnowLeopard.CoreReference.docset",
+           "/Developer/Documentation/DocSets/com.apple.ADC_Reference_Library.CoreReference.docset",
+         ]
+
+         docset = sets.find do |candidate| 
+           FileTest.exist?(candidate)
+         end
+         
+         return nil if docset.nil?
+
          object = class_name.match(/^[^;]+/)[0]
-
-
 
          cmd = docset_cmd + method_name + ' ' + docset
          result = `#{cmd} 2>&1`
@@ -73,7 +81,7 @@ end
 
 class DocServer
   def initialize
-    server = WEBrick::HTTPServer.new(:Port => 10001, :BindAddress => '127.0.0.1')
+    server = WEBrick::HTTPServer.new(:Port => 17753, :BindAddress => '127.0.0.1')
     server.mount "/", Simple
 
     #trap "INT" do server.shutdown end
