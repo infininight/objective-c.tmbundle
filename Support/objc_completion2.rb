@@ -780,6 +780,8 @@ class ObjCMethodCompletion
     end
 
     types = [arg_types.uniq.to_set]
+    arg_types = arg_types.map {|e| "(#{e})"}
+    
     candidates = []
     # run through once allowing lists to be empty
     candidates += candidate_list(search, types, :annotated, true)
