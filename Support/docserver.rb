@@ -27,14 +27,20 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
     query = request.query
     content = {}
     if query['doc'] == 'cocoa'
-      doc = generateOBJCDocumentation(query['class'],query['method'])
+      if query['method']
+       doc = generateOBJCDocumentation(query['method'], "div", 1)
+      elsif query['constant']
+        doc = generateOBJCDocumentation(query['constant'], "div", 0)
+      elsif query['query']
+        doc = generateOBJCDocumentation(query['function'], "div", 0)
+      end
       content = {"documentation"=> doc} unless doc.nil?    
     end
 
     return 200, "text/plain", content.to_plist
   end
 
-  def generateOBJCDocumentation(class_name, method_name)
+  def generateOBJCDocumentation( symbol, tag, count)
        begin
          docset_cmd = "/Developer/usr/bin/docsetutil search -skip-text -query "
          sets =  [
@@ -48,9 +54,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
          
          return nil if docset.nil?
 
-         object = class_name.match(/^[^;]+/)[0]
-
-         cmd = docset_cmd + method_name + ' ' + docset
+         cmd = docset_cmd + symbol + ' ' + docset
          result = `#{cmd} 2>&1`
 
          status = $?
@@ -66,22 +70,41 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
          searchTerm = "<a name=\"#{anchor}\""
          startIndex = str.index(searchTerm)
          return str if startIndex.nil?
-         endIndex = str.index("<a name=\"//apple_ref/occ/", startIndex + searchTerm.length)
-         unless(startIndex && endIndex )
-           return nil
-         else
-           return str[startIndex...endIndex]
-         end
+         #return str[startIndex.. startIndex + 200]
+         # endIndex = str.index("<a name=\"//apple_ref/occ/", startIndex + searchTerm.length)
+         endIndex = find_end_tag(tag ,str, startIndex, count)  
+         return nil if endIndex.nil?
+         return str[startIndex...endIndex]
+         
        rescue Exception => e
-         return "error when generating documentation>" + selection.inspect + e.message + e.backtrace.inspect + method_name + ">>>"+object + url
+         return "error when generating documentation>" + selection.inspect + e.message + e.backtrace.inspect + symbol + ">>>"+object + url
        end
    end
+   
+   def find_end_tag(tag, string, start, count=0) 
+     rgxp = /<(\/)?#{tag}/
+     string = string[start..-1]
+     offset = start
+     while m = string.match(rgxp)
+        if m[1]
+          count -= 1
+          puts m.begin(0)
+        else
+          count += 1
+        end
+        offset += m.end(0)
 
+        return offset if count == 0
+        string = m.post_match
+     end
+     nil
+   end
 end
 
 class DocServer
+  PORT = 60921
   def initialize
-    server = WEBrick::HTTPServer.new(:Port => 17753, :BindAddress => '127.0.0.1')
+    server = WEBrick::HTTPServer.new(:Port => PORT, :BindAddress => '127.0.0.1')
     server.mount "/", Simple
 
     #trap "INT" do server.shutdown end

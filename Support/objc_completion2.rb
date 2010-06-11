@@ -494,7 +494,7 @@ class ObjCMethodCompletion
       out = stuff[0]
     end
     out = "(#{stuff[5].gsub(/ \*/,(ENV['TM_C_POINTER'] || " *").rstrip)})#{out}" unless call || (stuff.size < 4)
-    fallback = "http://localhost:17753/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
+    fallback = "http://localhost:#{DocServer::PORT}/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
     return [out, filterOn, cand, type, fallback]
   end
 
@@ -589,9 +589,9 @@ class ObjCMethodCompletion
     prettyCandidates = c.map do |candidate, type|
       ca = candidate.split("\t")
       if type == :functions
-        [ca[0]+ca[1], ca[0], candidate,type]
+        [ca[0]+ca[1], ca[0], candidate,type, "http://localhost:#{DocServer::PORT}/?doc=cocoa&function=#{e_url ca[0]}"]
       else
-        [ca[0], ca[0], candidate,type]
+        [ca[0], ca[0], candidate,type, "http://localhost:#{DocServer::PORT}/?doc=cocoa&constant=#{e_url ca[0]}"]
       end
         
       #[((ca[1].nil? || !ca[4].nil? || c[1]=="") ? ca[0] : ca[0]+ca[1]),ca[0], candidate] 
@@ -633,7 +633,7 @@ class ObjCMethodCompletion
        STDERR.reopen(open('/tmp/nada2',"w+")) 
        require 'open-uri'
        begin
-         open('http://localhost:17753')
+         open("http://localhost:#{DocServer::PORT}")
        rescue
          begin
 
