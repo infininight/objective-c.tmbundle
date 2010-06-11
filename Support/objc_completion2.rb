@@ -493,8 +493,13 @@ class ObjCMethodCompletion
     else
       out = stuff[0]
     end
-    out = "(#{stuff[5].gsub(/ \*/,(ENV['TM_C_POINTER'] || " *").rstrip)})#{out}" unless call || (stuff.size < 4)
-    fallback = "http://localhost:#{DocServer::PORT}/?doc=cocoa&method=#{e_url stuff[0]}&class=#{e_url stuff[3]}"
+
+# this method is used for both cocoa methods and class completion inside methods
+    if call
+      fallback = "http://localhost:#{DocServer::PORT}/?doc=cocoa&method=#{e_url stuff[0]}"
+    else 
+      fallback = "http://localhost:#{DocServer::PORT}/?doc=cocoa&class=#{e_url stuff[0]}"      
+    end
     return [out, filterOn, cand, type, fallback]
   end
 
@@ -772,11 +777,9 @@ class ObjCMethodCompletion
         candidates = temp unless temp.empty?        
       end
       arg_types = candidates.map{|e| e[0].split("\t")[5+mn.count(":")]}
-      
     end
 
     types = [arg_types.uniq.to_set]
-
     candidates = []
     # run through once allowing lists to be empty
     candidates += candidate_list(search, types, :annotated, true)
@@ -978,7 +981,7 @@ class ObjCMethodCompletion
         # [NSOb^]
       elsif t.match(/\[\s*$/)
         candidates = candidates_or_exit( k[0] + (backContext || "[[:alnum:]]"), nil, :classes)
-        res =pop_up(candidates, "",k[0])
+        res = pop_up(candidates, "",k[0], false)
         [res , (backContext && (res != "$0") ? bcL : 0)]
       elsif t.match(colon_and_space)
         #  [obj mess: arg^]
