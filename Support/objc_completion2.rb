@@ -378,8 +378,10 @@ class ObjCFallbackCompletion
 
     star = arg_name = false
     if ENV['TM_SCOPE'].include? "meta.protocol-list.objc"
+      # MyClass<Protocol^>
       files = [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaProtocols.txt.gz",false,false, :constant]]
     elsif ENV['TM_SCOPE'].include?("meta.scope.implementation.objc") ||  ENV['TM_SCOPE'].include?("meta.interface-or-protocol.objc")
+      # inside @implementation and @interface
       files = [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaClassesWithAncestry.txt.gz",false,false, :classes]]
       files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaTypes.txt.gz", true, false, :constant]] if ENV['TM_SCOPE'].include?("meta.scope.interface.objc")
       userClasses = ["#{ENV['TM_PROJECT_DIRECTORY']}/.classes.TM_Completions.txt.gz", false,false,:constant]
@@ -418,8 +420,11 @@ class ObjCFallbackCompletion
     
     alpha_and_caret = /(==|!=|(?:\+|\-|\*|\/)?=)?\s*([a-zA-Z_][_a-zA-Z0-9]*)\(?$/
     if k = line[0..caret_placement].match(alpha_and_caret)
+      # check if left side as an assignment, addition or anything else that might give a hint
+      # about what the (return)type is of what we want to complete
       if k[1]
         star = arg_name = false
+        # calculate the start position of whatever the lhs is.
         r = caseSensitive(k.pre_match)
         if r.nil? || (!r.empty? && r[0].nil? )
           candidates = candidates_or_exit(k[2], files)
@@ -759,6 +764,9 @@ class ObjCMethodCompletion
   def return_type_based_c_constructs_suggestions(mn, search, show_arg, typeName)
     rules = open("#{ENV['TM_BUNDLE_SUPPORT']}/SpecialRules.txt","r").read.split("\n")
     arg_types = nil
+    # Check in the special rules if there is a special "attributed" argument type which this
+    # part of the selector accepts. Also make sure that the type of the caller is correct
+    # if such information exist
     rules.each do |rule|
       sMn, sCn, sIMn, sTy = rule.split("!")
       #     sCn = nil if sCn.empty?
@@ -767,6 +775,10 @@ class ObjCMethodCompletion
         break
       end
     end
+    # If the special rules didn't provide a special case, gather a list of all types
+    # a method selector named like the current, accepts. Do a search for every one
+    # with this prefix, since the user could continue to type additional method parts.
+
     unless arg_types
       candidates = candidate_list(mn, nil, :methods)
       if typeName
@@ -780,7 +792,6 @@ class ObjCMethodCompletion
     end
 
     types = [arg_types.uniq.to_set]
-    arg_types = arg_types.map {|e| "(#{e})"}
     
     candidates = []
     # run through once allowing lists to be empty
@@ -798,6 +809,7 @@ class ObjCMethodCompletion
     end
 
     if show_arg
+      arg_types = arg_types.map {|e| "(#{e})"}
       candidates.insert(0, *arg_types)
     end
     #      puts candidates.inspect.gsub(",","\n")
