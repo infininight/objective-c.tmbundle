@@ -268,7 +268,7 @@ class ObjCFallbackCompletion
   
   def fallback(full, lang, type)
     #singularize
-    type = type[0..-2];    
+    type = (type == 'classes' ? 'class' : type[0..-2])    
     "http://localhost:#{DocServer::PORT}/?doc=#{lang}&#{type}=#{e_url full.split("\t")[0]}"
   end
 
