@@ -1,5 +1,7 @@
 require 'webrick'
 require ENV['TM_SUPPORT_PATH']+ '/lib/osx/plist'
+require "#{ENV['TM_SUPPORT_PATH']}/lib/escape"
+
 
 class Simple < WEBrick::HTTPServlet::AbstractServlet
   def initialize(server)
@@ -26,6 +28,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   def do_stuff_with(request)
     query = request.query
     content = {}
+    doc = nil
     if query['doc'] == 'cocoa'
       if query['method']
        doc = generateOBJCDocumentation(query['method'], "div", 1)
@@ -36,11 +39,36 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
       elsif query['class']
         doc = generateCocoaClassDocumentation(query['class'])
       end
-      content = {"documentation"=> doc} unless doc.nil?    
+      
+    elsif query['doc'] == 'cpp'
+      if query['function']
+        doc = fetchCPPFunctionDocumentation(query['function'])
+      end
     end
+    content = {"documentation"=> doc} unless doc.nil?
 
     return 200, "text/plain", content.to_plist
   end
+  
+  def fetchCPPFunctionDocumentation(function_name)
+    name = ENV['TM_BUNDLE_SUPPORT'] + "/CppReferenceWiki.tsf"
+    url = %x{grep -e ^#{e_sh function_name }"[[:space:]]" #{e_sh name}}.split("\n")
+    if !url.empty?
+      require 'open-uri'
+      str =  open(url[0].split("\t")[2]).read
+
+      searchTerm =  "<h2><a name=\"#{function_name}\" id=\"#{function_name}\">#{function_name}</a></h2>"
+      startIndex = str.index(searchTerm)
+      return str if startIndex.nil?
+      
+      endIndex = find_end_tag("div", str, startIndex,0) 
+      return nil if endIndex.nil?
+      
+      return str[startIndex...endIndex]
+    end
+    nil
+  end
+
   
   def generateCocoaClassDocumentation(symbol)
     url, anchor = run_command(symbol)
@@ -78,7 +106,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
       return str[startIndex...endIndex]
       
     rescue Exception => e
-      return "error when generating documentation>" + selection.inspect + e.message + e.backtrace.inspect + symbol + ">>>"+object + url
+      return "error when generating documentation>" + e.message + e.backtrace.inspect + symbol + url
     end
    end
    
@@ -148,5 +176,4 @@ end
 
 if $0 == __FILE__ then
   s=  DocServer.new
-  s.shutdown
 end

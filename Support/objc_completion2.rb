@@ -55,8 +55,8 @@ end
 
 def type_declaration_snippet_generator(dict)
 
-  arg_name = @arg_name && dict['noArg']
-  star = @star && dict['pure']
+  arg_name = @arg_name
+  star = @star
   pointer = @tm_C_pointer
   pointer = " *" unless pointer
 
@@ -88,7 +88,7 @@ def run(res)
     r = snippet_generator(res['cand'], res['match'].size)
   elsif res['type'] == "functions"
     r = cfunction_snippet_generator(res['cand'])
-  elsif res['pure'] && res['noArg']
+  elsif res['type'] == 'classes'
     r = type_declaration_snippet_generator res
   else 
     r = "$0"
@@ -206,18 +206,15 @@ class ObjCFallbackCompletion
 
     unless b.nil?
       if k = line[b..-1].match(/^((?:const\s+)?(?:([_a-z])|([A-Z]))[a-zA-Z0-9_]*)|(\[)/)
-        if k[2] #lowercase
+        if k[2] #lowercase means it's a instance variable
           h = method_parse(@full[0..@car])
           unless h.nil?
             type = h[k[1]]
             r = [type]
             r = ["#Character","#FunctionKey"] if type == "unichar"
           end
-        elsif k[3] #uppercase
-          files = [[ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaConstants.txt.gz",true,true, :constant],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaAnonymousEnums.txt.gz",true,false,:anonymous],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaAnnotatedStrings.txt.gz",false,false,:annotated],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaFunctions.txt.gz",false,false,:functions]]
+        elsif k[3] #uppercase means a Constant or Functions
+          files = get_files(["cocoa",],["constants","functions"])
           candidates = candidates_or_exit(k[1]+ "[[:space:]]", files)
           r = [candidates[0][0].split("\t")[2]] unless candidates.empty?
 
@@ -236,23 +233,28 @@ class ObjCFallbackCompletion
   
   def candidates_or_exit(methodSearch,files)
     candidates = []
-    files.each do |name, pure,noArg, type|
-      zGrepped = %x{zgrep -e ^#{e_sh methodSearch } #{name}}
+      
+    files.each do |name|      
+      basename = File.basename(name)
+      type = basename.match(/\b(constants|functions|classes|types|protocols)\b/)[1]
+      lang = basename.match(/\b(cpp|c|cocoa)\./)[1]
+      zGrepped = %x{zgrep -e ^#{e_sh methodSearch } #{e_sh name}}
       candidates += zGrepped.split("\n").map do |elem|
-        [elem, pure, noArg, type]
+        [elem, lang, type]
       end
     end
     TextMate.exit_show_tool_tip "No completion available" if candidates.empty?
     return candidates
   end
 
-  def prettify(candidate)
+  def prettify(candidate, lang, type)
     ca = candidate.split("\t")
-    if ca[1] && ca[1][0] && ca[1][0].chr == "("
-      ca[0]+ca[1]
+    if type == "functions"
+      pretty= ca[0]+ca[1]
     else
-      ca[0]
+      pretty = ca[0]
     end
+    [pretty, candidate, type, fallback(candidate, lang, type)]
   end
 
   def construct_arg_name(arg)
@@ -263,38 +265,45 @@ class ObjCFallbackCompletion
       ""
     end
   end
-
-  def snippet_generator(cand,s,star,arg_name)
-    c = cand.split"\t"
-    if c[1] && c[1][0] && c[1][0].chr == "("
-      i = 0
-      middle = c[1][1..-2].split(",").collect do |arg|
-        "${"+(i+=1).to_s+":"+ arg.strip + "}" 
-      end.join(", ")
-      c[0][s..-1]+"("+middle+")$0"
-    else
-      name = ""
-      if arg_name
-        name = "${2:#{construct_arg_name(c[0])}}"
-        if star
-          name = ("${1:${TM_C_POINTER: *}#{name}}") if star
-        else
-          name = " " + name
-        end
-
-      else
-        name = (ENV['TM_C_POINTER'] || " *").rstrip if star
-      end
-      #  name = name[0..-2].rstrip unless arg_name
-      e_sn(c[0][s..-1]) + name + "$0"
-    end
+  
+  def fallback(full, lang, type)
+    #singularize
+    type = type[0..-2];    
+    "http://localhost:#{DocServer::PORT}/?doc=#{lang}&#{type}=#{e_url full.split("\t")[0]}"
   end
 
+  def start_documentation_server
+    fork do
+       STDOUT.reopen(open('/tmp/nada1',"w+"))
+       STDERR.reopen(open('/tmp/nada2',"w+")) 
+       require 'open-uri'
+       begin
+         open("http://localhost:#{DocServer::PORT}")
+       rescue
+         begin
+
+         DocServer.new
+
+         rescue Exception => e
+
+           open("/tmp/docs.txt", "w+") do |f|
+             f.puts "-"*25
+             f.puts e.message
+           end
+         else
+           open("/tmp/else.txt", "w+") do |f|
+             f.puts "-"*25
+             #f.puts e.message
+           end
+         end
+       end
+     end
+  end
   def pop_up(candidates, searchTerm,star,arg_name)
     start = searchTerm.size
 
-    prettyCandidates = candidates.map do |cand|
-      [prettify(cand[0]), cand[0],cand[1],cand[2],cand[3]]
+    prettyCandidates = candidates.map do |full, lang, type|
+      prettify(full, lang, type)
     end.sort {|x,y| x[1].downcase <=> y[1].downcase }
 
     
@@ -324,21 +333,16 @@ class ObjCFallbackCompletion
       #  searchTerm << candidates[0][index].chr
       #  index +=1
       #end
-     pl = prettyCandidates.map do |pretty, full, pure, noArg, type |
-        { 'display' => pretty,
-          'cand' => full,
-          'pure'=> pure, 
-          'noArg'=> noArg,
-          'type'=> type.to_s,
-          'match'=> full.split("\t")[0]
-        }
+     pl = prettyCandidates.map do |pretty, full,type, fallback |
+        convert_to_dialog_item(pretty, full,type, fallback)
       end
 
       flags = {}
       flags[:extra_chars]= '_'
       flags[:initial_filter]= searchTerm
+     # TextMate.exit_show_tool_tip pl.inspect
+      start_documentation_server
       begin
-        
         TextMate::UI.complete(pl, flags)  do |hash|           
           es = ExternalSnippetizer.new({:star => star,
                :arg_name => arg_name,
@@ -351,10 +355,33 @@ class ObjCFallbackCompletion
       end
      TextMate.exit_discard # create_new_document
     else
-      snippet_generator( candidates[0][0], start, star && !candidates[0][1], arg_name && !candidates[0][2] )
+      es = ExternalSnippetizer.new({:star => star,
+           :arg_name => arg_name,
+           :tm_C_pointer => ENV['TM_C_POINTER']})
+      item = convert_to_dialog_item(prettyCandidates[0][0], prettyCandidates[0][1],prettyCandidates[0][2],prettyCandidates[0][3])
+      item['match'][searchTerm.size..-1] + es.run( item)
     end
   end
+  
+  def convert_to_dialog_item(pretty,full,type, fallback)
+    { 'display' => pretty,
+      'cand' => full,
+      'type' => type,
+      'match' => full.split("\t")[0],
+      'fallback' => fallback
+    }
+  end
 
+  def get_files(languages, specifiers)
+    dir = ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/completion"]
+    dir << "#{e_sh ENV['TM_PROJECT_DIRECTORY']}" if ENV['TM_PROJECT_DIRECTORY']
+    Dir["#{create_glob(dir)}/{*.,}#{create_glob(languages)}.#{create_glob(specifiers)}{.TM_Completions,}.txt.gz"]
+  end
+  
+  def create_glob(list)
+    list.size > 1 ? "{#{list.join(",")}}" : list[0]
+  end
+  
   def print
 
     line = @line
@@ -376,37 +403,32 @@ class ObjCFallbackCompletion
       TextMate.exit_discard
     end
 
+    languages = ["cocoa","c"]
+    
+    languages << "cpp" if ENV['TM_SCOPE'].include? "source.objc++"
     star = arg_name = false
     if ENV['TM_SCOPE'].include? "meta.protocol-list.objc"
       # MyClass<Protocol^>
-      files = [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaProtocols.txt.gz",false,false, :constant]]
+      files = get_files(languages, ["protocols"]) # [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaProtocols.txt.gz",false,false, :constant]]
     elsif ENV['TM_SCOPE'].include?("meta.scope.implementation.objc") ||  ENV['TM_SCOPE'].include?("meta.interface-or-protocol.objc")
       # inside @implementation and @interface
-      files = [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaClassesWithAncestry.txt.gz",false,false, :classes]]
-      files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaTypes.txt.gz", true, false, :constant]] if ENV['TM_SCOPE'].include?("meta.scope.interface.objc")
-      userClasses = ["#{ENV['TM_PROJECT_DIRECTORY']}/.classes.TM_Completions.txt.gz", false,false,:constant]
-      files += [userClasses] if File.exists? userClasses[0]
-      if ENV['TM_SCOPE'].include?("meta.function.objc")
+      specifiers = ["classes"]
+      specifiers <<  "types" if ENV['TM_SCOPE'].include?("meta.scope.interface.objc")
+      if ENV['TM_SCOPE'].include?("meta.function.objc") # arguments for objc method
         star = true
-        files += [[ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaTypes.txt.gz",true,false, :constant]]
+        files = get_files(languages, specifiers)
       elsif ENV['TM_SCOPE'].include? "meta.scope.implementation.objc"
         star = arg_name = true
-        files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CLib.txt.gz",false,false, :functions],
-        [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaConstants.txt.gz",true,true, :constant],
-        [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaTypes.txt.gz",true,false, :constant],
-        ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaFunctions.txt.gz",false,false, :functions]]
-        files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/C++Lib.txt.gz",false,false, :functions]] if ENV['TM_SCOPE'].include? "source.objc++"
+        files = get_files(languages,specifiers + ["constants","types","functions","constants.annotated"] )
       elsif ENV['TM_SCOPE'].include? "meta.scope.interface.objc"
         star = arg_name = true
+        files = get_files(languages, specifiers)
+      else
+        files = get_files(languages, specifiers)
       end
     else
       star = arg_name = true
-      files = [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaClassesWithAncestry.txt.gz",false,false, :classes],
-      [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaConstants.txt.gz",true,true, :constant],
-      [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaTypes.txt.gz",true,false, :constant],
-      [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CLib.txt.gz",false,false, :functions],
-      [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaFunctions.txt.gz",false,false, :functions]]
-      files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/C++Lib.txt.gz",false,false, :functions]] if ENV['TM_SCOPE'].include? "source.objc++"
+      files = get_files(languages, ["constants","types","functions","classes"])
     end
     dot_alpha_and_caret = /\.([a-zA-Z][a-zA-Z0-9]*)?$/
     if temp =line[0..caret_placement].match( dot_alpha_and_caret)
@@ -430,12 +452,7 @@ class ObjCFallbackCompletion
           candidates = candidates_or_exit(k[2], files)
           res = pop_up(candidates, k[2],star,arg_name)
         else
-          files = [[ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaConstants.txt.gz",false,false, :constant],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaAnonymousEnums.txt.gz",false,false, :constant],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaAnnotatedStrings.txt.gz",false,false, :constant],
-          ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CocoaFunctions.txt.gz",false,false, :functions],
-          [ "#{e_sh ENV['TM_BUNDLE_SUPPORT']}/CLib.txt.gz",false,false, :functions]]
-          files += [["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/C++Lib.txt.gz",false,false, :functions]] if ENV['TM_SCOPE'].include? "source.objc++"
+          files = get_files(languages, ["constants","types","functions","classes","annotated"])
           candidates = candidates_or_exit(k[2], files)
           temp = []
           unless candidates.empty?
