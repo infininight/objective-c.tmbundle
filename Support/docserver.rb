@@ -71,7 +71,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
 
   
   def generateCocoaClassDocumentation(symbol)
-    url, anchor = run_command(symbol)
+    url, anchor, os = run_command(symbol)
     return nil if url.nil?
     
     str = open(url, "r").read
@@ -90,7 +90,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
   
   def generateOBJCDocumentation( symbol, tag, count)
     begin
-      url, anchor = run_command(symbol)
+      url, anchor, os = run_command(symbol)
       return nil if url.nil?
       
       str = open(url, "r").read
@@ -101,7 +101,13 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
       #return str[startIndex.. startIndex + 200]
       # endIndex = str.index("<a name=\"//apple_ref/occ/", startIndex + searchTerm.length)
       #endIndex = find_end_tag(tag ,str, startIndex, count)
-      endIndex = find_declared_in(str, startIndex)
+      if os == :snowleopard
+        endIndex = find_declared_in(str, startIndex)
+      elsif os == :leopard
+        endIndex = find_end_tag("div",str, startIndex, 0)
+      else
+        return nil
+      end
       return nil if endIndex.nil?
       return str[startIndex...endIndex]
       
@@ -113,12 +119,12 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
    def run_command(symbol)
      docset_cmd = "/Developer/usr/bin/docsetutil search -skip-text -query "
      sets =  [
-       "/Developer/Documentation/DocSets/com.apple.adc.documentation.AppleSnowLeopard.CoreReference.docset",
-       "/Developer/Documentation/DocSets/com.apple.ADC_Reference_Library.CoreReference.docset",
+       ["/Developer/Documentation/DocSets/com.apple.adc.documentation.AppleSnowLeopard.CoreReference.docset",:snowleopard],
+       ["/Developer/Documentation/DocSets/com.apple.ADC_Reference_Library.CoreReference.docset", :leopard],
      ]
 
-     docset = sets.find do |candidate| 
-       FileTest.exist?(candidate)
+     docset, os = sets.find do |candidate| 
+       FileTest.exist?(candidate[0])
      end
      
      return nil if docset.nil?
@@ -134,7 +140,7 @@ class Simple < WEBrick::HTTPServlet::AbstractServlet
      path, anchor = urlPart.split("\#")
 
      url = docset + "/Contents/Resources/Documents/" + path
-     return url, anchor
+     return url, anchor, os
    end
    
    def find_declared_in(str, start)
