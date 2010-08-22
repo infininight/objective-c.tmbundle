@@ -374,8 +374,10 @@ class ObjCFallbackCompletion
 
   def get_files(languages, specifiers)
     dir = ["#{e_sh ENV['TM_BUNDLE_SUPPORT']}/completion"]
+    dir << "#{e_sh ENV['TM_C_BUNDLE_SUPPORT']}" if ENV['TM_C_BUNDLE_SUPPORT']
     dir << "#{e_sh ENV['TM_PROJECT_DIRECTORY']}" if ENV['TM_PROJECT_DIRECTORY']
-    Dir["#{create_glob(dir)}/{*.,}#{create_glob(languages)}.#{create_glob(specifiers)}{.TM_Completions,}.txt.gz"]
+    res = Dir["#{create_glob(dir)}/{*.,}#{create_glob(languages)}.#{create_glob(specifiers)}{.TM_Completions,}.txt.gz"]
+    res.find_all { |path| File.exists? path }
   end
   
   def create_glob(list)
